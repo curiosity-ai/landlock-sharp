@@ -13,8 +13,10 @@
         <Copyright>(c) Copyright 2025 Curiosity GmbH - all right reserved</Copyright>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>logo.png</PackageIcon>
     </PropertyGroup>
     <ItemGroup>
         <None Include="..\README.md" Pack="true" PackagePath="\"/>
+        <None Include="..\logo.png" Pack="true" PackagePath="\"/>
     </ItemGroup>
 </Project>

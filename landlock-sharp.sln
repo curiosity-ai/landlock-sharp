@@ -14,6 +14,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".devops", ".devops", "{0FD9
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{779EB0A9-FD57-4C7D-B9F6-1A0D09E70883}"
 	ProjectSection(SolutionItems) = preProject
+		logo.png = logo.png
 		README.md = README.md
 	EndProjectSection
 EndProject
