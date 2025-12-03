@@ -31,7 +31,7 @@ steps:
     packageType: sdk
     version: 10.x
     includePreviewVersions: false
-    installationPath: $(Agent.ToolsDirectory)\dotnet
+    installationPath: $(Agent.ToolsDirectory)/dotnet
 
 - task: DotNetCoreCLI@2
   inputs:
