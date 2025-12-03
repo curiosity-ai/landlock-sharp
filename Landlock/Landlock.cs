@@ -10,22 +10,20 @@ using System.Text;
 /// </summary>
 public sealed class Landlock
 {
-    public static bool IsSupported() => OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
+    public static bool IsSupported() => OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64 && GetAbiVersion() > 0;
 
-    //Reference: https://man7.org/linux/man-pages/man7/landlock.7.html
+    // Reference: https://man7.org/linux/man-pages/man7/landlock.7.html
     //           https://github.com/torvalds/linux/blob/master/security/landlock/ruleset.h
 
-    // --- x86_64 syscall numbers (update if you target a different arch) ---
+    // --- x86_64 syscall numbers ---
     private const long SYS_landlock_create_ruleset = 444;
     private const long SYS_landlock_add_rule = 445;
     private const long SYS_landlock_restrict_self = 446;
 
-    // --- landlock query version flags ---
     private const uint LANDLOCK_CREATE_RULESET_VERSION = 1u << 0;
 
-    // --- rule types ---
     private const uint LANDLOCK_RULE_PATH_BENEATH = 1;
-
+    private const uint LANDLOCK_RULE_NET_PORT = 2;
     public enum FileSystem
     {
         CORE,
@@ -46,6 +44,7 @@ public sealed class Landlock
         TRUNCATE,
         IOCTL_DEV,
     }
+
     public enum Network
     {
         BIND_TCP,
@@ -265,14 +264,17 @@ public sealed class Landlock
     private const ulong LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET = (1UL << 0);
     private const ulong LANDLOCK_SCOPE_SIGNAL               = (1UL << 1);
 
+
+    private const uint LANDLOCK_RESTRICT_SELF_LOG_SAME_EXEC_OFF  = 0x1;
+    private const uint LANDLOCK_RESTRICT_SELF_LOG_NEW_EXEC_ON    = 0x2;
+    private const uint LANDLOCK_RESTRICT_SELF_LOG_SUBDOMAINS_OFF = 0x4;
+
     //Not yet available: private const ulong LANDLOCK_RESTRICT_SELF_TSYNC = (1UL << 0);
 
-    // --- helpers for opening directories for rules (O_PATH) ---
-    private const int O_PATH = 0x200000; // Linux O_PATH flag (open(2)). Confirm on target platform.
+    private const int O_PATH = 0x200000;
     private int _ruleSetHandle;
     private bool _alreadyEnforced;
 
-    // --- P/Invoke signatures ---
     [DllImport("libc", SetLastError = true)]
     private static extern nint syscall(long number, int arg1, uint arg2);
 
@@ -302,8 +304,6 @@ public sealed class Landlock
     private static extern int prctl(int option, ulong arg2, ulong arg3, ulong arg4, ulong arg5);
 
 
-    // --- user-space ABI structs (packed to match kernel UAPI) ---
-    // struct landlock_ruleset_attr { __u64 handled_access_fs; };
     [StructLayout(LayoutKind.Sequential)]
     private struct landlock_ruleset_attr
     {
@@ -312,7 +312,6 @@ public sealed class Landlock
         public ulong scoped;
     }
 
-    // struct landlock_path_beneath_attr { __u64 allowed_access; __s32 parent_fd; /* padding */ };
     [StructLayout(LayoutKind.Sequential)]
     private struct landlock_path_beneath_attr
     {
@@ -321,16 +320,22 @@ public sealed class Landlock
         private int _padding; // ensure same size/align as kernel ABI
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct landlock_net_port_attr
+    {
+        public ulong allowed_access;
+    }
+
     /// <summary>
     /// Query the highest supported Landlock ABI version.
-    /// Returns ABI version (>= 1) on success, or throws on error.
+    /// Returns ABI version (>= 1) on success, or version < 0 if not supported
     /// </summary>
     public static int GetAbiVersion()
     {
-        // Per manpage: call landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)
         long ret = syscall(SYS_landlock_create_ruleset, 0, 0, LANDLOCK_CREATE_RULESET_VERSION);
-        if (ret < 0)
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "landlock_create_ruleset (version query) failed");
+        // We return negative versions as an indicator 
+        //if (ret < 0)
+        //    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "landlock_create_ruleset (version query) failed");
         return (int)ret;
     }
 
@@ -387,7 +392,7 @@ public sealed class Landlock
 
     /// <summary>
     /// Add a PATH_BENEATH rule to the ruleset. parentPath should be a directory path.
-    /// <paramref name="parentPath"/>Path to directory to have access restricted</paramref>
+    /// <paramref name="parentPath"/>Path to directory to have access allowed</paramref>
     /// <paramref name="allowedActions">Which operations should be allowed in this directory</paramref>
     /// </summary>
     public Landlock AddPathBeneathRule(string parentPath, params FileSystem[] allowedActions)
@@ -432,9 +437,41 @@ public sealed class Landlock
     }
 
     /// <summary>
+    /// Add a NET_PORT rule to the ruleset. port should be a network port number.
+    /// <paramref name="port"/>Port number to have access allowed</paramref>
+    /// <paramref name="allowedActions">Which operations should be allowed in this port</paramref>
+    /// </summary>
+    public Landlock AddPortRule(int port, params Network[] allowedActions)
+    {
+        if (_alreadyEnforced) throw new Exception("Cannot modify an already enforced landlock");
+
+        var attr = new landlock_net_port_attr
+        {
+            allowed_access = Merge(Filter(allowedActions)),
+        };
+
+        IntPtr p = Marshal.AllocHGlobal(Marshal.SizeOf<landlock_net_port_attr>());
+        try
+        {
+            Marshal.StructureToPtr(attr, p, false);
+            long ret = syscall(SYS_landlock_add_rule, _ruleSetHandle, LANDLOCK_RULE_NET_PORT, p, 0);
+            if (ret < 0)
+            {
+                var errno = Marshal.GetLastWin32Error();
+                throw new System.ComponentModel.Win32Exception(errno, $"Call to landlock_add_rule failed with error {errno}");
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(p);
+        }
+        return this;
+    }
+
+    /// <summary>
     /// Enforce a populated ruleset on the current thread.
     /// </summary>
-    public void Enforce()
+    public void Enforce(bool disableDenyLogging = false, bool enableChildDenyLogging = false, bool disabledNestedDomainsLogging = false)
     {
         if (_alreadyEnforced) return;
 
@@ -446,7 +483,17 @@ public sealed class Landlock
             throw new System.ComponentModel.Win32Exception(errno, $"Call to PR_SET_NO_NEW_PRIVS failed with error {errno}");
         }
 
-        ret = syscall(SYS_landlock_restrict_self, _ruleSetHandle, (uint)0);
+        uint flags = 0;
+        
+        if (GetAbiVersion() >= 7)
+        {
+            if (disableDenyLogging)           flags |= LANDLOCK_RESTRICT_SELF_LOG_SAME_EXEC_OFF;
+            if (enableChildDenyLogging)       flags |= LANDLOCK_RESTRICT_SELF_LOG_NEW_EXEC_ON;
+            if (disabledNestedDomainsLogging) flags |= LANDLOCK_RESTRICT_SELF_LOG_SUBDOMAINS_OFF;
+        }
+
+        ret = syscall(SYS_landlock_restrict_self, _ruleSetHandle, flags);
+
         if (ret < 0)
         {
             var errno = Marshal.GetLastWin32Error();
@@ -458,8 +505,10 @@ public sealed class Landlock
         _alreadyEnforced = true;
     }
 
-    //// AllThreadsLandlockRestrictSelf enforces the given ruleset on all OS
-    //// threads belonging to the current process.
+
+    // Investigate future all-threads lock
+    // AllThreadsLandlockRestrictSelf enforces the given ruleset on all OS
+    // threads belonging to the current process.
     //func AllThreadsLandlockRestrictSelf(rulesetFd int, flags int) (err error) {
     //	_, _, e1 := psx.Syscall3(unix.SYS_LANDLOCK_RESTRICT_SELF, uintptr(rulesetFd), uintptr(flags), 0)
     //	if e1 != 0 {
