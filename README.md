@@ -1,6 +1,6 @@
 ﻿# Landlock for .NET
 
-*A lightweight C# wrapper for the (https://landlock.io/)[Linux Landlock kernel sandboxing feature].*
+*A lightweight C# wrapper for the [https://landlock.io/](Linux Landlock kernel sandboxing feature).*
 
 [![NuGet](https://img.shields.io/nuget/v/Landlock.svg)](https://www.nuget.org/packages/Landlock)
 
