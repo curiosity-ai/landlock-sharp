@@ -17,13 +17,14 @@ public sealed class Landlock
 
     // --- x86_64 syscall numbers ---
     private const long SYS_landlock_create_ruleset = 444;
-    private const long SYS_landlock_add_rule = 445;
-    private const long SYS_landlock_restrict_self = 446;
+    private const long SYS_landlock_add_rule       = 445;
+    private const long SYS_landlock_restrict_self  = 446;
 
     private const uint LANDLOCK_CREATE_RULESET_VERSION = 1u << 0;
 
     private const uint LANDLOCK_RULE_PATH_BENEATH = 1;
-    private const uint LANDLOCK_RULE_NET_PORT = 2;
+    private const uint LANDLOCK_RULE_NET_PORT     = 2;
+
     public enum FileSystem
     {
         CORE,
