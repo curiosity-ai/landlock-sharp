@@ -51,11 +51,28 @@ if (supported)
 
 This example checks for kernel support, creates a ruleset controlling core filesystem operations, allows read access to a specific directory, and enforces the sandbox so the process cannot access anything outside the allowed paths.
 
+### Restricting TCP connections
+
+On Linux 6.7+ (Landlock ABI 4) a ruleset can also handle TCP. Every port not named by a rule is denied:
+
+```csharp
+var sandbox = Landlock.CreateRuleset(
+    new[] { Landlock.FileSystem.CORE },
+    new[] { Landlock.Network.CONNECT_TCP });
+
+sandbox.AddPathBeneathRule("/usr", Landlock.FileSystem.READ_FILE, Landlock.FileSystem.READ_DIR, Landlock.FileSystem.EXECUTE);
+sandbox.AddPortRule(443, Landlock.Network.CONNECT_TCP);
+
+sandbox.Enforce();
+```
+
+Landlock restricts the **calling thread** and every process it starts afterwards, irrevocably. To confine a child process without confining your application, enforce the ruleset on a dedicated thread and start the process from that thread.
+
 ---
 
 ## 🧪 Requirements
 
-* Linux kernel 5.13+
+* Linux kernel 5.13+ (6.7+ for TCP port rules), x86_64 or arm64
 * .NET 6.0+
 * No root privileges required
 

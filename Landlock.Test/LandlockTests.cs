@@ -169,4 +169,67 @@ public class LandlockTests
         Assert.IsTrue(notEnforcedReadWorkedToReadOnlyAllowed,   "Reading from an read-only allowed directory should work");
         Assert.IsTrue(notEnforcedWriteFailedToReadOnlyAllowed,  "Writing to an read-only allowed directory should work");
     }
+    [TestMethod]
+    public void LandlockEnforcesPortRules()
+    {
+        if (Landlock.GetAbiVersion() < 4)
+        {
+            Assert.Inconclusive("TCP port rules need Landlock ABI 4 (Linux 6.7)");
+        }
+
+        using var allowed = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        using var blocked = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        allowed.Start();
+        blocked.Start();
+
+        var allowedPort = ((System.Net.IPEndPoint)allowed.LocalEndpoint).Port;
+        var blockedPort = ((System.Net.IPEndPoint)blocked.LocalEndpoint).Port;
+
+        bool connectedToAllowed = false;
+        bool connectedToBlocked = false;
+
+        var threadWithLandlock = new Thread(() =>
+        {
+            var sandbox = Landlock.CreateRuleset(null, new[] { Landlock.Network.CONNECT_TCP });
+
+            sandbox.AddPortRule(allowedPort, Landlock.Network.CONNECT_TCP);
+            sandbox.Enforce();
+
+            connectedToAllowed = TryConnect(allowedPort);
+            connectedToBlocked = TryConnect(blockedPort);
+        });
+
+        threadWithLandlock.Start();
+        threadWithLandlock.Join();
+
+        Assert.IsTrue(connectedToAllowed,  "Connecting to the port the rule allows should work");
+        Assert.IsFalse(connectedToBlocked, "Connecting to any other port should fail");
+    }
+
+    [TestMethod]
+    public void AddPortRuleRejectsAnInvalidPort()
+    {
+        if (Landlock.GetAbiVersion() < 4)
+        {
+            Assert.Inconclusive("TCP port rules need Landlock ABI 4 (Linux 6.7)");
+        }
+
+        var sandbox = Landlock.CreateRuleset(null, new[] { Landlock.Network.CONNECT_TCP });
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => sandbox.AddPortRule(70000, Landlock.Network.CONNECT_TCP));
+    }
+
+    private static bool TryConnect(int port)
+    {
+        try
+        {
+            using var client = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            client.Connect(System.Net.IPAddress.Loopback, port);
+            return true;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+    }
 }

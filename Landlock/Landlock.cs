@@ -6,16 +6,18 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 /// <summary>
-/// Minimal C# wrapper for the Linux Landlock syscalls (x86_64 syscall numbers).
+/// Minimal C# wrapper for the Linux Landlock syscalls (x86_64 and arm64).
 /// </summary>
 public sealed class Landlock
 {
-    public static bool IsSupported() => OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64 && GetAbiVersion() > 0;
+    public static bool IsSupported() => OperatingSystem.IsLinux() && (RuntimeInformation.ProcessArchitecture is Architecture.X64 or Architecture.Arm64) && GetAbiVersion() > 0;
 
     // Reference: https://man7.org/linux/man-pages/man7/landlock.7.html
     //           https://github.com/torvalds/linux/blob/master/security/landlock/ruleset.h
 
-    // --- x86_64 syscall numbers ---
+    // --- syscall numbers ---
+    // Landlock was added after the syscall tables were unified, so these are the same on x86_64
+    // and on arm64 (include/uapi/asm-generic/unistd.h).
     private const long SYS_landlock_create_ruleset = 444;
     private const long SYS_landlock_add_rule       = 445;
     private const long SYS_landlock_restrict_self  = 446;
@@ -325,6 +327,7 @@ public sealed class Landlock
     private struct landlock_net_port_attr
     {
         public ulong allowed_access;
+        public ulong port;
     }
 
     /// <summary>
@@ -445,10 +448,12 @@ public sealed class Landlock
     public Landlock AddPortRule(int port, params Network[] allowedActions)
     {
         if (_alreadyEnforced) throw new Exception("Cannot modify an already enforced landlock");
+        if (port < 0 || port > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(port), port, "A TCP port is between 0 and 65535");
 
         var attr = new landlock_net_port_attr
         {
             allowed_access = Merge(Filter(allowedActions)),
+            port           = (ulong)port,
         };
 
         IntPtr p = Marshal.AllocHGlobal(Marshal.SizeOf<landlock_net_port_attr>());
